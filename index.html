@@ -209,6 +209,20 @@ input[type=range]{width:100%;height:32px;accent-color:var(--teal);margin:0}
 .send.need{border-color:var(--orange);box-shadow:0 0 0 4px var(--orange-soft)}
 .clear p{margin:8px 0 0;font-weight:700;color:var(--orange)}
 
+/* ---- 手書きメモ ---- */
+.memofab{position:fixed;right:14px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:15;border:none;border-radius:999px;padding:12px 18px;background:var(--orange);color:#fff;font-weight:700;font-size:15px;box-shadow:0 4px 14px rgba(0,0,0,.22);cursor:pointer}
+.memofab.hid{display:none}
+.memo{position:fixed;left:0;right:0;bottom:0;height:46vh;z-index:25;background:var(--surface);border-top:2px solid var(--orange);box-shadow:0 -8px 24px rgba(0,0,0,.16);display:none;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,0px)}
+.memo.on{display:flex}
+.memo.big{height:72vh}
+.memo .mbar{display:grid;grid-template-columns:1.15fr 1.15fr 1.2fr 1.15fr .6fr 1fr;gap:4px;padding:6px 8px;flex:0 0 auto;max-width:560px;width:100%;margin:0 auto}
+.memo .mbar button{min-width:0;min-height:42px;padding:2px 2px;border-radius:10px;border:1.5px solid var(--line);background:var(--bg);font-size:13px;cursor:pointer;white-space:nowrap;overflow:hidden}
+.memo .mbar button.on{border-color:var(--orange);background:var(--orange-soft);font-weight:700}
+.memo .mbar .mclose{color:var(--teal);font-weight:700;border-color:var(--teal)}
+.memo .mcv{flex:1 1 auto;min-height:0;margin:0 8px 8px;border-radius:10px;border:1px solid var(--line);overflow:hidden;
+  background-color:var(--bg);background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:20px 20px}
+.memo canvas{display:block;touch-action:none;cursor:crosshair}
+
 </style>
 </head><body>
 <div class="wrap" id="app"></div>
@@ -1521,6 +1535,96 @@ const LESSONS = [
 ];
 
 
+/* ===== 手書きの計算メモ =====
+   回の画面の右下に「✏️ メモ」。押すと画面の下半分に方眼の手書きスペースが出る（上半分の問題は見えたまま）。
+   線は回ごとにこの端末に保存（記録としては送らない）。キーパッドとは同時に出さない。 */
+const MEMO = (() => {
+  const KEYP = "nattoku2.memo.";
+  let fab=null, panel=null, cv=null, ctx=null, lessonId=null, strokes=[], cur=null, mode="pen", big=false, clearArm=0;
+
+  function load(id){ try{ return JSON.parse(localStorage.getItem(KEYP+id)||"[]"); }catch(e){ return []; } }
+  function store(){ if(!lessonId) return; try{ localStorage.setItem(KEYP+lessonId, JSON.stringify(strokes)); }catch(e){} }
+
+  function build(){
+    fab=el("button","memofab","✏️ メモ"); fab.type="button"; fab.setAttribute("aria-label","計算メモをひらく");
+    fab.addEventListener("click",e=>{ e.stopPropagation(); show(); });
+    panel=el("div","memo");
+    panel.innerHTML=`<div class="mbar">
+      <button type="button" data-a="pen" class="on">✏️ ペン</button><button type="button" data-a="eraser">🧽 けす</button>
+      <button type="button" data-a="undo">↶ もどす</button><button type="button" data-a="clear">全部けす</button>
+      <button type="button" data-a="size" aria-label="大きさを変える">⇕</button><button type="button" data-a="close" class="mclose">とじる</button></div>
+      <div class="mcv"><canvas></canvas></div>`;
+    cv=panel.querySelector("canvas"); ctx=cv.getContext("2d");
+    panel.addEventListener("click",e=>e.stopPropagation());
+    panel.querySelectorAll(".mbar button").forEach(b=>b.addEventListener("click",()=>act(b.dataset.a,b)));
+    cv.addEventListener("pointerdown",down); cv.addEventListener("pointermove",move);
+    ["pointerup","pointercancel","pointerleave"].forEach(t=>cv.addEventListener(t,up));
+    document.body.append(fab, panel);
+    window.addEventListener("resize",()=>{ if(panel.classList.contains("on")) fit(); });
+  }
+  function act(a,b){
+    if(a==="pen"||a==="eraser"){ mode=a; panel.querySelectorAll('[data-a="pen"],[data-a="eraser"]').forEach(x=>x.classList.toggle("on",x===b)); }
+    else if(a==="undo"){ strokes.pop(); store(); redraw(); }
+    else if(a==="clear"){
+      if(Date.now()-clearArm<3000){ strokes=[]; store(); redraw(); clearArm=0; b.textContent="全部けす"; }
+      else { clearArm=Date.now(); b.textContent="もう一度"; setTimeout(()=>{ if(b.textContent!=="全部けす"&&Date.now()-clearArm>=2900) b.textContent="全部けす"; },3000); }
+    }
+    else if(a==="size"){ big=!big; panel.classList.toggle("big",big); fit(); }
+    else if(a==="close") hide();
+    if(typeof touch==="function") touch();
+  }
+  function fit(){
+    const box=panel.querySelector(".mcv"), r=box.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+    cv.width=Math.round(r.width*dpr); cv.height=Math.round(r.height*dpr); cv.style.width=r.width+"px"; cv.style.height=r.height+"px";
+    ctx.setTransform(dpr,0,0,dpr,0,0); redraw();
+    const w=document.querySelector(".wrap"); if(w) w.style.paddingBottom=(panel.offsetHeight+24)+"px";
+  }
+  /* 点は「キャンバス幅を1」とした座標で保存（画面の向きが変わってもくずれない） */
+  function W(){ return cv.clientWidth||1; }
+  function line(s){
+    if(!s.p.length) return;
+    const k=W();
+    ctx.save();
+    ctx.globalCompositeOperation = s.m==="eraser" ? "destination-out" : "source-over";
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim()||"#222";
+    ctx.lineWidth = s.m==="eraser" ? 22 : 2.6; ctx.lineCap="round"; ctx.lineJoin="round";
+    ctx.beginPath(); ctx.moveTo(s.p[0][0]*k, s.p[0][1]*k);
+    if(s.p.length===1) ctx.lineTo(s.p[0][0]*k+0.1, s.p[0][1]*k);
+    for(let i=1;i<s.p.length;i++) ctx.lineTo(s.p[i][0]*k, s.p[i][1]*k);
+    ctx.stroke(); ctx.restore();
+  }
+  function redraw(){ ctx.clearRect(0,0,cv.width,cv.height); strokes.forEach(line); }
+  function pt(e){ const r=cv.getBoundingClientRect(), k=W(); return [Math.round((e.clientX-r.left)/k*1000)/1000, Math.round((e.clientY-r.top)/k*1000)/1000]; }
+  function down(e){ e.preventDefault(); cv.setPointerCapture&&cv.setPointerCapture(e.pointerId); cur={m:mode,p:[pt(e)]}; strokes.push(cur); line(cur); }
+  function move(e){
+    if(!cur) return; e.preventDefault();
+    const q=pt(e), last=cur.p[cur.p.length-1], k=W();
+    if(Math.hypot((q[0]-last[0])*k,(q[1]-last[1])*k)<1.5) return;
+    cur.p.push(q);
+    const k2=W(); ctx.save(); ctx.globalCompositeOperation= cur.m==="eraser"?"destination-out":"source-over";
+    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue("--ink").trim()||"#222";
+    ctx.lineWidth= cur.m==="eraser"?22:2.6; ctx.lineCap="round"; ctx.lineJoin="round";
+    ctx.beginPath(); ctx.moveTo(last[0]*k2,last[1]*k2); ctx.lineTo(q[0]*k2,q[1]*k2); ctx.stroke(); ctx.restore();
+  }
+  function up(){ if(!cur) return; cur=null; store(); if(typeof touch==="function") touch(); }
+
+  function show(){
+    if(typeof hideKP==="function") hideKP();
+    panel.classList.add("on"); fab.classList.add("hid"); fit();
+  }
+  function hide(){
+    if(!panel) return;
+    panel.classList.remove("on"); if(lessonId) fab.classList.remove("hid");
+    const w=document.querySelector(".wrap"); if(w) w.style.paddingBottom="";
+  }
+  /* 回を開いたとき・もくじにもどったとき */
+  function enter(id){ if(!fab) build(); hide(); lessonId=id; strokes=load(id); fab.classList.remove("hid"); fab.style.display=""; }
+  function leave(){ if(!fab) return; hide(); lessonId=null; fab.style.display="none"; }
+  function isOpen(){ return !!panel && panel.classList.contains("on"); }
+  function setFab(visible){ if(fab && lessonId) fab.classList.toggle("hid", !visible || isOpen()); }
+  return {enter, leave, hide, show, isOpen, setFab};
+})();
+
 /* ===== 設定：Apps Script の URL を入れると「記録を送る」ボタンが出る ===== */
 const SUBMIT_URL = "https://script.google.com/macros/s/AKfycbyFprEEbZe4hGuYo3PKCIv9PLeFSYhmJrlnh-3UfYOD4L40W3OQDYZalRP9y5EBbBsQYg/exec";   /* 例: "https://script.google.com/macros/s/XXXX/exec" */
 const APP_VER = "1";
@@ -1574,7 +1678,7 @@ function toast(msg, ms){ ms=ms||1800; let t=document.getElementById("toast"); if
 /* ---------- もくじ ---------- */
 const app=document.getElementById("app");
 function home(){
-  cur=null; hideKP();
+  cur=null; hideKP(); MEMO.leave();
   document.documentElement.style.removeProperty("--zc"); document.documentElement.style.removeProperty("--zs");
   let allDone=0, allTotal=0; LESSONS.forEach(l=>{ const s=stats(l); allDone+=s.done; allTotal+=s.total; });
   app.innerHTML=`
@@ -1628,6 +1732,7 @@ function open(id){
     box.appendChild(d);
   });
   box.appendChild(renderReflect());
+  MEMO.enter(cur.id);
   updateScore(); window.scrollTo(0,0);
 }
 
@@ -1738,6 +1843,7 @@ function renderItem(it){
 /* ---------- 入力用キーパッド ---------- */
 let kpEl=null, kpTarget=null;
 function showKP(api){
+  MEMO.hide(); MEMO.setFab(false);
   if(kpTarget && kpTarget!==api){ kpTarget.box.classList.remove("act"); kpTarget.paint(false); }
   kpTarget=api; api.box.classList.add("act"); api.paint(true);
   if(!kpEl){ kpEl=el("div","kp"); document.body.appendChild(kpEl); }
@@ -1765,7 +1871,7 @@ function kpHelp(ex){
 }
 function hideKP(){
   if(kpTarget){ kpTarget.box.classList.remove("act"); if(!kpTarget.box.classList.contains("done")) kpTarget.paint(false); }
-  kpTarget=null; if(kpEl) kpEl.style.display="none";
+  kpTarget=null; if(kpEl) kpEl.style.display="none"; MEMO.setFab(true);
   const w=document.querySelector(".wrap"); if(w) w.style.paddingBottom="";
 }
 document.addEventListener("click",e=>{ if(!kpTarget) return; if(kpEl&&kpEl.contains(e.target)) return; if(kpTarget.card.contains(e.target)) return; hideKP(); });
