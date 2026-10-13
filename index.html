@@ -98,6 +98,7 @@ b{font-weight:700}
 .lcard .stars .on{color:#e0a020}
 .track{flex:1;height:8px;border-radius:99px;background:var(--line);overflow:hidden}
 .track span{display:block;height:100%}
+.pill.warn{background:var(--orange-soft);color:var(--orange)}
 .pill{font-size:12px;border-radius:99px;padding:1px 8px;background:var(--ok-soft);color:var(--ok);font-weight:700;white-space:nowrap}
 .note{font-size:13px;color:var(--muted);margin-top:22px}
 
@@ -197,9 +198,16 @@ input[type=range]{width:100%;height:32px;accent-color:var(--teal);margin:0}
 .clear.on{display:block}
 .clear .stamp{display:inline-block;border:4px solid var(--orange);color:var(--orange);font-weight:900;font-size:28px;letter-spacing:.2em;padding:4px 18px;border-radius:12px;transform:rotate(-6deg)}
 @media (prefers-reduced-motion:no-preference){.clear.on .stamp{animation:st .5s cubic-bezier(.2,1.6,.4,1)}@keyframes st{from{transform:rotate(-6deg) scale(2);opacity:0}}}
-.toast{position:fixed;left:50%;top:70px;transform:translateX(-50%);z-index:30;background:var(--ink);color:var(--bg);font-weight:700;border-radius:999px;padding:6px 16px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .25s}
+.toast{position:fixed;left:50%;top:70px;transform:translateX(-50%);z-index:30;background:var(--ink);color:var(--bg);font-weight:700;border-radius:14px;padding:8px 16px;font-size:14px;line-height:1.5;text-align:center;width:max-content;max-width:calc(100% - 32px);opacity:0;pointer-events:none;transition:opacity .25s}
 .toast.on{opacity:.92}
 :focus-visible{outline:3px solid var(--orange);outline-offset:2px}
+
+.sendnote{display:flex;align-items:center;gap:6px;width:100%;text-align:left;margin-top:8px;padding:8px 12px;border-radius:12px;border:1.5px dashed var(--teal);background:var(--surface);color:var(--ink);font-size:14px;cursor:pointer}
+.sendnote b{color:var(--teal)}
+.sendnote .tx{flex:1;min-width:0}
+.sendnote .ar{color:var(--teal);font-weight:700}
+.send.need{border-color:var(--orange);box-shadow:0 0 0 4px var(--orange-soft)}
+.clear p{margin:8px 0 0;font-weight:700;color:var(--orange)}
 
 </style>
 </head><body>
@@ -1546,6 +1554,7 @@ function stats(les){
   les.secs.forEach(s=>s.items.forEach(it=>unitKeys(it).forEach(k=>{ const r=st.items[k]; if(r){ tries+=r.tries||0; if(r.ok){ done++; if(r.first) first++; if(r.shown) shown++; } } })));
   return {done, first, shown, tries, total:les.total, minutes:Math.round((st.active||0)/60000)};
 }
+function needsSend(les){ if(!SUBMIT_URL) return false; const s=stats(les), st=LS(les.id); return s.done>0 && (!st.sentAt || s.done>(st.sentDone||0)); }
 function stars(s){ if(s.done<s.total) return 0; const f=s.first/s.total; if(s.shown===0 && f>=0.9) return 3; if(f>=0.7) return 2; return 1; }
 
 let cur=null, streak=0;
@@ -1554,9 +1563,13 @@ function mark(key, ok, shown){
   if(r.ok) return r;
   if(shown){ r.ok=true; r.shown=true; streak=0; }
   else { r.tries++; if(ok){ r.ok=true; r.first=r.tries===1; streak = r.first ? streak+1 : 0; if(r.first && (streak===5||streak===10||streak===15||streak===20)) toast(`${streak}問れんぞく 1回で正解！`); } else streak=0; }
-  touch(); updateScore(); return r;
+  touch(); const before=wasDone; updateScore(); if(!before && wasDone && SUBMIT_URL) setTimeout(()=>toast("クリア！ いちばん下の「記録を送る」を押してね", 4000), 600); return r;
 }
-function toast(msg){ let t=document.getElementById("toast"); if(!t){ t=el("div","toast"); t.id="toast"; document.body.appendChild(t); } t.textContent=msg; t.classList.add("on"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("on"),1800); }
+let wasDone=false, warned=false;
+function goSend(){ const e=document.getElementById("sendbox"); if(e) e.scrollIntoView({behavior:"smooth", block:"center"}); }
+/* もくじ・つぎへ を押したとき、まだ送っていなければ1回だけ知らせて送信欄へ */
+function remindSend(){ if(!cur || warned || !needsSend(cur)) return false; warned=true; goSend(); toast("まだ記録を送っていないよ。「記録を送る」を押してから進もう（そのまま進むなら、もう一度押す）", 4500); return true; }
+function toast(msg, ms){ ms=ms||1800; let t=document.getElementById("toast"); if(!t){ t=el("div","toast"); t.id="toast"; document.body.appendChild(t); } t.textContent=msg; t.classList.add("on"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("on"),ms); }
 
 /* ---------- もくじ ---------- */
 const app=document.getElementById("app");
@@ -1577,7 +1590,8 @@ function home(){
     <div class="lessons">${ls.map(les=>{ const s=stats(les), p=Math.round(100*s.done/s.total), sr=stars(s);
       return `<button class="lcard" data-l="${les.id}"><span class="no" style="background:var(${z.c})"><span><small>第</small>${les.no}<small>回</small></span></span>
       <span class="t">${R(les.title)}</span><span class="stars" aria-label="星${sr}">${[1,2,3].map(k=>`<span class="${k<=sr?"on":""}">★</span>`).join("")}</span>
-      <span class="meta"><span class="track"><span style="width:${p}%;background:var(${z.c})"></span></span>${s.done}/${s.total}${LS(les.id).sentAt?' <span class="pill">送信済</span>':''}</span></button>`; }).join("")}</div></section>`; }).join("")}
+      <span class="meta"><span class="track"><span style="width:${p}%;background:var(${z.c})"></span></span>${s.done}/${s.total}${needsSend(les)?' <span class="pill warn">未送信</span>':LS(les.id).sentAt?' <span class="pill">送信済</span>':''}</span></button>`; }).join("")}</div></section>`; }).join("")}
+  <p class="note">📮 各回の最後に、いちばん下の「記録を送る」を押そう。押さないと記録は届かない（途中で送ってもよい。何回でも送り直せる）。</p>
   <p class="note">★1つ：全部とけた　★★：7割以上を1回目で正解　★★★：「答えを見る」なしで9割以上を1回目で正解</p>`;
   const nk=document.getElementById("nk");
   nk.addEventListener("input",()=>{ ST.nick=nk.value.trim(); save(); });
@@ -1591,16 +1605,21 @@ function updateScore(){
   const sk=document.getElementById("sk"); if(sk) sk.textContent = streak>=3 ? `🔥${streak}` : "";
   const sm=document.getElementById("sendsum"); if(sm) renderSendSum();
   const cl=document.getElementById("clear"); if(cl) cl.classList.toggle("on", s.done===s.total);
+  wasDone = s.done===s.total;
+  const sb=document.getElementById("sendbox"); if(sb) sb.classList.toggle("need", needsSend(cur));
 }
 
 /* ---------- 1回分 ---------- */
 function open(id){
-  cur=LESSONS.find(l=>l.id===id); streak=0;
+  cur=LESSONS.find(l=>l.id===id); streak=0; { const s0=stats(cur); wasDone=s0.done===s0.total; }
   const z=ZONES[cur.zone];
   document.documentElement.style.setProperty("--zc",`var(${z.c})`); document.documentElement.style.setProperty("--zs",`var(${z.s})`);
   app.innerHTML=`<div class="bar"><button class="back" id="bk">← もくじ</button><span class="ttl">第${cur.no}回　${R(cur.title)}</span><span class="streak" id="sk"></span><span class="sc" id="sc"></span></div>
-  <div class="goal"><b>今日のゴール</b>　${R(cur.goal)}</div><div id="secs"></div>`;
-  document.getElementById("bk").addEventListener("click", home);
+  <div class="goal"><b>今日のゴール</b>　${R(cur.goal)}</div>
+  ${SUBMIT_URL?`<button type="button" class="sendnote" id="sn"><span class="tx">📮 最後まで解いたら、いちばん下の<b>「記録を送る」</b>を押してね</span><span class="ar">↓</span></button>`:""}<div id="secs"></div>`;
+  warned=false;
+  document.getElementById("bk").addEventListener("click", ()=>{ if(remindSend()) return; home(); });
+  const sn=document.getElementById("sn"); if(sn) sn.addEventListener("click", goSend);
   const box=document.getElementById("secs");
   cur.secs.forEach(sec=>{
     const d=el("section","sec");
@@ -1754,7 +1773,7 @@ document.addEventListener("click",e=>{ if(!kpTarget) return; if(kpEl&&kpEl.conta
 /* ---------- ふりかえり・送信 ---------- */
 function renderSendSum(){
   const s=stats(cur), st=LS(cur.id), e=document.getElementById("sendsum");
-  e.innerHTML=`解いた数 <b>${s.done}</b> / ${s.total}　1回目で正解 <b>${s.first}</b>　取り組み時間 <b>${s.minutes}</b>分`+(st.sentAt?`<br><span class="pill">送信済み ${st.sentAt}</span>（何回でも送り直せる）`:"");
+  e.innerHTML=`解いた数 <b>${s.done}</b> / ${s.total}　1回目で正解 <b>${s.first}</b>　取り組み時間 <b>${s.minutes}</b>分`+(needsSend(cur)?`<br><span class="pill warn">${st.sentAt?"送ったあとに解いた分がまだ届いていない":"まだ送っていない"}</span>`:st.sentAt?`<br><span class="pill">送信済み ${st.sentAt}</span>（何回でも送り直せる）`:"");
 }
 function renderReflect(){
   const st=LS(cur.id);
@@ -1766,20 +1785,20 @@ function renderReflect(){
   c1.appendChild(rate);
   const mk=(key,q)=>{ const c=el("div","card"); c.appendChild(el("div","q",q)); const ta=el("textarea"); ta.value=st.texts[key]||""; ta.addEventListener("input",()=>{ st.texts[key]=ta.value; touch(); }); c.appendChild(ta); return c; };
   d.append(c1, mk("learned","今日「なるほど」と思ったことを一言"), mk("unclear","まだモヤモヤしていること（なければ「なし」）"));
-  const sd=el("div","send"); sd.innerHTML=`<div class="q">記録を送る</div><div class="sum" id="sendsum"></div>`;
+  const cl=el("div","clear",`<span class="stamp">クリア</span><p>最後に、下の「記録を送る」を押そう 📮</p>`); cl.id="clear"; d.appendChild(cl);
+  const sd=el("div","send"); sd.id="sendbox"; sd.innerHTML=`<div class="q">📮 記録を送る</div><div class="sum" id="sendsum"></div>`;
   if(SUBMIT_URL){
     const a=el("a","go","記録を送る"); a.target="_blank"; a.rel="noopener"; const warn=el("small");
     const ready=()=>!!ST.nick;
     const upd=()=>{ if(ready()){ a.href=buildUrl(); a.removeAttribute("aria-disabled"); a.style.opacity=""; warn.textContent="新しいタブで「送信しました」と出たら完了。タブを閉じてここにもどろう。"; }
       else { a.removeAttribute("href"); a.setAttribute("aria-disabled","true"); a.style.opacity=".4"; warn.textContent="もくじにもどって、ニックネームを入れてから送ろう。"; } };
     a.addEventListener("pointerdown",upd); a.addEventListener("focus",upd);
-    a.addEventListener("click",()=>{ upd(); if(!ready()) return; const t=new Date(); st.sentAt=(t.getMonth()+1)+"/"+t.getDate()+" "+t.getHours()+":"+String(t.getMinutes()).padStart(2,"0"); save(); setTimeout(renderSendSum,50); });
+    a.addEventListener("click",()=>{ upd(); if(!ready()) return; const t=new Date(); st.sentAt=(t.getMonth()+1)+"/"+t.getDate()+" "+t.getHours()+":"+String(t.getMinutes()).padStart(2,"0"); st.sentDone=stats(cur).done; save(); setTimeout(()=>{ renderSendSum(); updateScore(); },50); });
     upd(); sd.append(a, warn);
   } else sd.appendChild(el("small",null,"送信先はまだ設定されていない。記録はこのスマホの中に残っている。"));
   d.appendChild(sd);
-  const cl=el("div","clear",`<span class="stamp">クリア</span>`); cl.id="clear"; d.appendChild(cl);
   const nx=LESSONS[LESSONS.indexOf(cur)+1];
-  if(nx){ const b=el("button","go sub",`つぎへ：第${nx.no}回 ${R(nx.title)}`); b.type="button"; b.style.marginTop="16px"; b.addEventListener("click",()=>open(nx.id)); d.appendChild(b); }
+  if(nx){ const b=el("button","go sub",`つぎへ：第${nx.no}回 ${R(nx.title)}`); b.type="button"; b.style.marginTop="16px"; b.addEventListener("click",()=>{ if(remindSend()) return; open(nx.id); }); d.appendChild(b); }
   setTimeout(renderSendSum,0);
   return d;
 }
