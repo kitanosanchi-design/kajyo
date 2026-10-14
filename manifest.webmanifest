@@ -1,0 +1,16 @@
+{
+  "name": "なっとく数Ⅱ",
+  "short_name": "なっとく数Ⅱ",
+  "description": "指数・対数・三角関数・微分積分を、動かしてなっとくする自学アプリ",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f5f1",
+  "theme_color": "#1767a3",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
