@@ -223,6 +223,37 @@ input[type=range]{width:100%;height:32px;accent-color:var(--teal);margin:0}
   background-color:var(--bg);background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:20px 20px}
 .memo canvas{display:block;touch-action:none;cursor:crosshair}
 
+/* ---- なんで？ ---- */
+.askcard{border:2px solid var(--t4)}
+.askcard>.q{color:var(--t4)}
+.asknote{display:block;color:var(--muted);font-size:12px;margin:-4px 0 8px}
+.qtypes{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.chip{border:1.5px solid var(--line);background:var(--bg);border-radius:999px;padding:5px 12px;font-size:13px;cursor:pointer;color:var(--ink);text-align:left}
+.qtypes .chip{border-color:var(--t4);color:var(--t4);background:var(--surface)}
+.qalist{display:grid;gap:12px;margin-top:12px}
+.qa{display:grid;gap:6px}
+.qq{justify-self:end;max-width:92%;background:var(--teal-soft);border-radius:14px 14px 4px 14px;padding:8px 12px;font-size:15px}
+.qq span{margin-right:4px}
+.qr{max-width:96%;background:var(--bg);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:8px 12px;font-size:15px}
+.qr p{margin:0;white-space:pre-wrap}
+.qk{font-weight:700;color:var(--t4);font-size:13px;margin-bottom:2px}
+.qc{margin-top:6px;padding:6px 10px;border-radius:10px;background:var(--orange-soft);font-size:14px}
+.qc b{color:var(--orange);margin-right:4px}
+.qt{max-width:96%;background:var(--ok-soft);border-radius:14px;padding:8px 12px;font-size:15px;white-space:pre-wrap}
+.qt b{display:block;color:var(--ok);font-size:13px}
+.qn{display:flex;flex-wrap:wrap;gap:6px}
+.qn small{width:100%;color:var(--muted);font-size:12px}
+.qhead{font-size:13px;font-weight:700;color:var(--muted);margin:16px 0 4px}
+@media (prefers-reduced-motion:no-preference){.dots::after{content:"…";animation:dt 1s steps(3) infinite}@keyframes dt{0%{content:"."}33%{content:".."}66%{content:"..."}}}
+
+.gbtn{justify-self:start;display:inline-block;text-decoration:none;font-size:14px;font-weight:700;color:var(--teal);border:1.5px solid var(--teal);border-radius:999px;padding:6px 14px;background:var(--surface)}
+.qnote{display:grid;gap:4px}
+.qnote small{color:var(--muted);font-size:12px}
+.qnote textarea{min-height:56px}
+.qnote .go{margin-top:0;justify-self:start;min-height:38px;padding:4px 16px}
+.qf{background:var(--teal-soft)}
+.qf b{color:var(--teal)}
+
 </style>
 </head><body>
 <div class="wrap" id="app"></div>
@@ -1625,6 +1656,128 @@ const MEMO = (() => {
   return {enter, leave, hide, show, isOpen, setFab};
 })();
 
+/* ===== 「なんで？」：問いを立てて、AI（と北野先生）から返事をもらう =====
+   問いと返事は回ごとに LS(id).qa に残す。北野先生の返事は replies で取りに行く。 */
+const ASK = (() => {
+  const TYPES = [["なぜ〜？","なんで"],["〜でないとどうなる？","もし〜でなかったら、どうなる？"],["〜と〜はどこがちがう？","〜と〜は、どこがちがう？"],["いつでも成り立つ？","これは、いつでも成り立つ？"]];
+  let lastPull = 0;
+
+  function bubble(item, noNext){
+    const b=el("div","qa");
+    b.innerHTML=`<div class="qq"><span>🤔</span>${esc(item.q)}</div>`;
+    const a=el("div","qr");
+    if(item.pending){ a.innerHTML=`<span class="dots">考え中</span>`; }
+    else if(item.err){ a.innerHTML=`<p>${esc(item.err)}</p>`; }
+    else if(!item.answer){ a.innerHTML=`<p>📮 問いは北野先生に届いたよ。返事を待つあいだに、自分で調べてみよう。</p>`; }
+    else {
+      a.innerHTML = (item.kind?`<div class="qk">${esc(item.kind)}</div>`:"") + `<p>${esc(item.answer||"")}</p>` +
+        (item.check?`<div class="qc"><b>確かめてみよう</b>　${esc(item.check)}</div>`:"");
+    }
+    b.appendChild(a);
+    if(!item.pending && !item.err){
+      const g=el("a","gbtn",item.answer?"🔍 もっと調べる（Google の AI モード）":"🔍 Google の AI モードで調べる");
+      g.href=googleUrl(item.q, item.title||""); g.target="_blank"; g.rel="noopener";
+      g.addEventListener("click",()=>{ item.searched=true; save(); touch(); });
+      b.appendChild(g);
+      if(!noNext && item.id){
+        const w=el("div","qnote");
+        w.innerHTML=`<small>調べてわかったことを一言（北野先生に届く）</small>`;
+        const t=el("textarea"); t.value=item.found||""; t.maxLength=300; t.rows=2; t.placeholder="例：ラジアンだと弧の長さが r×θ だけで出せる";
+        const sb=el("button","go sub","送る"); sb.type="button"; const f=el("div","fb");
+        sb.addEventListener("click",async()=>{
+          const v=t.value.trim(); if(v.length<3){ fbSet(f,false,"一言でいいので書いてみよう"); return; }
+          sb.disabled=true;
+          try{ const r=await fetch(SUBMIT_URL+"?mode=note&id="+encodeURIComponent(item.id)+"&dev="+encodeURIComponent(ST.dev)+"&text="+encodeURIComponent(v)); const d=await r.json();
+               if(d.ok){ item.found=v; save(); fbSet(f,true,"○ 送ったよ。問い→調べる→まとめる、ができた！"); } else fbSet(f,false,d.msg||"送れなかった"); }
+          catch(e){ fbSet(f,false,"つながらなかった。もう一度押してね"); }
+          sb.disabled=false; touch();
+        });
+        w.append(t, sb, f); if(item.found) fbSet(f,true,"送ったもの：" + esc(item.found));
+        b.appendChild(w);
+      } else if(item.found){ b.appendChild(el("div","qt qf",`<b>調べてわかったこと</b>${esc(item.found)}`)); }
+    }
+    if(item.teacher){ b.appendChild(el("div","qt",`<b>北野先生から</b>${esc(item.teacher)}`)); }
+    if(!noNext && item.next && item.next.length && !item.pending){
+      const n=el("div","qn",`<small>つぎの問いにしてみる？（タップすると下の欄に入る）</small>`);
+      item.next.forEach(t=>{ const c=el("button","chip",esc(t)); c.type="button"; c.addEventListener("click",()=>{ const ta=document.getElementById("askta"); if(ta){ ta.value=t; ta.focus(); ta.scrollIntoView({behavior:"smooth",block:"center"}); } }); n.appendChild(c); });
+      b.appendChild(n);
+    }
+    return b;
+  }
+
+  /* Google の AI モードを、問いと「答え方の注文」をつけて開く（udm=50 は AI モードを開く値。公式の仕様ではない） */
+  function googleUrl(q, title){
+    const pre = `高校数学Ⅱ${title?"「"+title+"」":""}で出てきた疑問：${q}　高校生にわかるように、数学Ⅱの範囲で言える理由を先に、短く説明してください。最後に、自分で確かめられる小さな問題を1つ出してください。`;
+    return "https://www.google.com/search?udm=50&q=" + encodeURIComponent(pre);
+  }
+
+  /* 回の「ふりかえり」の中に置くカード */
+  function card(){
+    const st=LS(cur.id); st.qa=st.qa||[];
+    const c=el("div","card askcard");
+    c.innerHTML=`<div class="q">🤔 「なんで？」と思ったことを1文で</div>
+      <small class="asknote">モヤモヤを「問い」にしてみよう。問いは北野先生に届く。そのあと Google の AI モードで自分で調べられる。名前や住所は書かないでね。</small>
+      <div class="qtypes"></div>`;
+    const ty=c.querySelector(".qtypes");
+    TYPES.forEach(([lab,stub])=>{ const b=el("button","chip",lab); b.type="button"; b.addEventListener("click",()=>{ ta.value = stub==="なんで" ? "なんで" : stub; ta.focus(); }); ty.appendChild(b); });
+    const ta=el("textarea"); ta.id="askta"; ta.maxLength=300; ta.placeholder="例：なんでラジアンが必要なの？"; ta.value=st.texts.askdraft||"";
+    ta.addEventListener("input",()=>{ st.texts.askdraft=ta.value; touch(); });
+    const go=el("button","go","きいてみる"); go.type="button";
+    const fb=el("div","fb");
+    const list=el("div","qalist");
+    const paint=()=>{ list.innerHTML=""; st.qa.slice().reverse().forEach(it=>list.appendChild(bubble(it))); };
+    go.addEventListener("click",async()=>{
+      const q=ta.value.trim();
+      if(q.length<4){ fbSet(fb,false,"もう少しくわしく書いてみよう（どこが、なんで？）"); return; }
+      if(!ST.nick){ fbSet(fb,false,"もくじにもどって、ニックネームを入れてから聞こう。"); return; }
+      fb.className="fb"; fb.textContent="";
+      const item={q, pending:true, t:Date.now(), title:cur.title.replace(/\$|@[a-z]+|[{}]/g,"")}; st.qa.push(item); save(); paint(); go.disabled=true;
+      try{
+        const url=SUBMIT_URL+"?"+Object.entries({mode:"ask", q, nick:ST.nick, dev:ST.dev, lesson:cur.no, title:cur.title.replace(/\$|@/g,""), goal:cur.goal.replace(/\$|@[a-z]+|[{}]/g,"")}).map(([k,v])=>k+"="+encodeURIComponent(String(v).slice(0,300))).join("&");
+        const r=await fetch(url,{method:"GET"}); const d=await r.json();
+        delete item.pending;
+        if(d.ok){ Object.assign(item,{id:d.id, kind:d.kind, answer:d.answer, check:d.check, next:d.next||[], human:!!d.human}); ta.value=""; st.texts.askdraft=""; }
+        else if(d.limit){ item.err=d.msg; }
+        else { st.qa.pop(); fbSet(fb,false,d.msg||"うまく送れなかった。もう一度ためしてね。"); }
+      }catch(e){ delete item.pending; st.qa.pop(); fbSet(fb,false,"つながらなかった。電波のいいところで、もう一度「きいてみる」を押してね。"); }
+      go.disabled=false; save(); paint(); touch();
+    });
+    c.append(ta, go, fb, list); paint();
+    pull();
+    return c;
+  }
+
+  /* 北野先生の返事を取りに行く（1分に1回まで） */
+  async function pull(force){
+    if(!SUBMIT_URL || !ST.dev) return;
+    const hasQ = Object.values(ST.lessons).some(l=>(l.qa||[]).some(x=>x.id));
+    if(!hasQ) return;
+    if(!force && Date.now()-lastPull<60000) return; lastPull=Date.now();
+    try{
+      const r=await fetch(SUBMIT_URL+"?mode=replies&dev="+encodeURIComponent(ST.dev)); const d=await r.json();
+      if(!d.ok) return; let changed=false;
+      (d.items||[]).forEach(x=>{ Object.values(ST.lessons).forEach(l=>(l.qa||[]).forEach(it=>{ if(it.id===x.id && it.teacher!==x.reply){ it.teacher=x.reply; it.unread=true; changed=true; } })); });
+      if(changed){ save(); if(cur){ const box=document.querySelector(".askcard"); if(box){ const nc=card(); box.replaceWith(nc); } } else if(document.getElementById("myq")) home(); toast("北野先生から返事がきたよ", 3000); }
+    }catch(e){}
+  }
+
+  function count(){ let n=0, unread=0; Object.values(ST.lessons).forEach(l=>(l.qa||[]).forEach(x=>{ if(!x.err){ n++; if(x.unread) unread++; } })); return {n, unread}; }
+
+  /* もくじから開く「わたしの問い」 */
+  function page(){
+    hideKP(); MEMO.leave(); cur=null;
+    const rows=[]; LESSONS.forEach(les=>{ (LS(les.id).qa||[]).forEach(x=>{ if(!x.err) rows.push([les,x]); }); });
+    app.innerHTML=`<div class="bar"><button class="back" id="bk">← もくじ</button><span class="ttl">🤔 わたしの問い</span><span class="sc">${rows.length} こ</span></div>
+      <p class="note" style="margin-top:0">これまでに立てた問い。問いがふえるほど、数学が「自分のもの」になっていく。</p><div id="ql"></div>`;
+    document.getElementById("bk").addEventListener("click",home);
+    const box=document.getElementById("ql");
+    if(!rows.length) box.appendChild(el("p","note","まだない。各回の最後の「なんで？」で聞いてみよう。"));
+    rows.reverse().forEach(([les,x])=>{ const h=el("div","qhead",`第${les.no}回　${R(les.title)}`); box.append(h, bubble(x, true)); x.unread=false; });
+    save(); window.scrollTo(0,0);
+  }
+  return {card, pull, count, page};
+})();
+
 /* ===== 設定：Apps Script の URL を入れると「記録を送る」ボタンが出る ===== */
 const SUBMIT_URL = "https://script.google.com/macros/s/AKfycbyFprEEbZe4hGuYo3PKCIv9PLeFSYhmJrlnh-3UfYOD4L40W3OQDYZalRP9y5EBbBsQYg/exec";   /* 例: "https://script.google.com/macros/s/XXXX/exec" */
 const APP_VER = "1";
@@ -1684,7 +1837,7 @@ function home(){
   app.innerHTML=`
   <div class="hero"><div class="eb">数学Ⅱ　自分で進めるワーク</div><h1>なっとく数Ⅱ<small>指数・対数・三角関数・微分積分　全20回</small></h1>
   <p>動かして、ためして、「なるほど」をつかむ。答えるとすぐに○かどうかがわかる。1回30分くらい。</p></div>
-  <div class="links"><a href="${MATOME_URL}" target="_blank" rel="noopener">📘 別冊「基本事項まとめ」</a></div>
+  <div class="links"><a href="${MATOME_URL}" target="_blank" rel="noopener">📘 別冊「基本事項まとめ」</a>${SUBMIT_URL?(()=>{ const c=ASK.count(); return `<a href="#" id="myq">🤔 わたしの問い ${c.n}こ${c.unread?` <span class="pill warn">返事 ${c.unread}</span>`:""}</a>`; })():""}</div>
   <div class="who">
     <div><label for="nk">ニックネーム（記録を送るときに使う）</label><input id="nk" maxlength="20" value="${esc(ST.nick)}" placeholder="例：かじょう太郎"></div>
     <small class="whynote">本名でなくてよい。途中の記録はこのスマホの中に残る（同じブラウザで開けば続きから）。ぜんぶで ${allDone} / ${allTotal} 問</small>
@@ -1700,6 +1853,8 @@ function home(){
   const nk=document.getElementById("nk");
   nk.addEventListener("input",()=>{ ST.nick=nk.value.trim(); save(); });
   app.querySelectorAll("[data-l]").forEach(b=>b.addEventListener("click",()=>open(b.dataset.l)));
+  const mq=document.getElementById("myq"); if(mq) mq.addEventListener("click",e=>{ e.preventDefault(); ASK.page(); });
+  ASK.pull();
   window.scrollTo(0,0);
 }
 
@@ -1891,6 +2046,7 @@ function renderReflect(){
   c1.appendChild(rate);
   const mk=(key,q)=>{ const c=el("div","card"); c.appendChild(el("div","q",q)); const ta=el("textarea"); ta.value=st.texts[key]||""; ta.addEventListener("input",()=>{ st.texts[key]=ta.value; touch(); }); c.appendChild(ta); return c; };
   d.append(c1, mk("learned","今日「なるほど」と思ったことを一言"), mk("unclear","まだモヤモヤしていること（なければ「なし」）"));
+  if(SUBMIT_URL) d.appendChild(ASK.card());
   const cl=el("div","clear",`<span class="stamp">クリア</span><p>最後に、下の「記録を送る」を押そう 📮</p>`); cl.id="clear"; d.appendChild(cl);
   const sd=el("div","send"); sd.id="sendbox"; sd.innerHTML=`<div class="q">📮 記録を送る</div><div class="sum" id="sendsum"></div>`;
   if(SUBMIT_URL){
